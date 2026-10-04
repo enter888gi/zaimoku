@@ -1,1 +1,484 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>超簡易モザイク・ぼかし Editor v4</title>
+  <style>
+    :root {
+      --bg-color: #1e1e24;
+      --panel-bg: #2b2d42;
+      --accent-color: #4cc9f0;
+      --text-color: #edf2f4;
+    }
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: var(--bg-color);
+      color: var(--text-color);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+    header {
+      background-color: var(--panel-bg);
+      padding: 10px 15px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+      z-index: 10;
+    }
+    .control-group {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(255,255,255,0.05);
+      padding: 4px 8px;
+      border-radius: 6px;
+    }
+    label { font-size: 11px; color: #8d99ae; }
+    select, button {
+      background: #3d405b;
+      color: #fff;
+      border: 1px solid #555;
+      padding: 5px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    button:hover, select:hover { background: #81b29a; }
+    button.btn-mode { background: #e07a5f; font-weight: bold; }
+    button.btn-mode.active { background: #f4a261; color: #000; border: 2px solid #fff; }
+    button.btn-primary { background: #3d5a80; font-weight: bold; }
+    button.btn-primary:hover { background: #98c1d9; color: #000; }
+    
+    #workspace {
+      flex: 1;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      position: relative;
+      overflow: hidden;
+      padding: 10px;
+      background-image: 
+        linear-gradient(45deg, #282828 25%, transparent 25%), 
+        linear-gradient(-45deg, #282828 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, #282828 75%),
+        linear-gradient(-45deg, transparent 75%, #282828 75%);
+      background-size: 20px 20px;
+      background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+    }
+    canvas {
+      box-shadow: 0 0 20px rgba(0,0,0,0.5);
+      cursor: crosshair;
+      touch-action: none;
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+    }
+    #drop-zone {
+      position: absolute;
+      text-align: center;
+      padding: 40px;
+      border: 2px dashed #8d99ae;
+      border-radius: 12px;
+      background: rgba(43, 45, 66, 0.8);
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
 
+  <header>
+    <button onclick="document.getElementById('file-input').click()">📁 画像を開く</button>
+    <input type="file" id="file-input" accept="image/*" style="display:none">
+
+    <!-- モード切り替え & トリミング設定 -->
+    <div class="control-group">
+      <label>モード</label>
+      <button id="mode-edit-btn" class="btn-mode active" onclick="setMode('edit')">🎨 モザイク加工</button>
+      <button id="mode-crop-btn" class="btn-mode" onclick="setMode('crop')">✂️ トリミング選択</button>
+    </div>
+
+    <div class="control-group" id="crop-controls" style="display:none;">
+      <label>比率</label>
+      <select id="crop-aspect">
+        <option value="16:9">横16 : 縦9</option>
+        <option value="4:3">横4 : 縦3</option>
+        <option value="1:1">正方形 (1:1)</option>
+        <option value="9:16">縦16 : 横9</option>
+        <option value="3:4">縦4 : 横3</option>
+      </select>
+      <button class="btn-primary" onclick="executeCrop()">✂️ トリミング実行</button>
+    </div>
+
+    <!-- 加工設定 -->
+    <div class="control-group edit-ctrl">
+      <label>形状</label>
+      <select id="shape-select">
+        <option value="rect">四角型</option>
+        <option value="circle">円型</option>
+        <option value="pen">ペン（自由線）</option>
+      </select>
+    </div>
+
+    <div class="control-group edit-ctrl">
+      <label>効果</label>
+      <select id="type-select">
+        <option value="blur-normal">通常ぼかし</option>
+        <option value="blur-h">横ズレぼかし</option>
+        <option value="blur-v">縦ズレぼかし</option>
+        <option value="spread">拡散ぼかし</option>
+        <option value="mosaic">通常モザイク</option>
+        <option value="blackout">黒塗り</option>
+      </select>
+    </div>
+
+    <div class="control-group edit-ctrl">
+      <label>強度 (1〜5)</label>
+      <select id="level-select">
+        <option value="1">1 (超微弱)</option>
+        <option value="2">2 (弱)</option>
+        <option value="3">3 (中)</option>
+        <option value="4">4 (やや強)</option>
+        <option value="5" selected>5 (強)</option>
+      </select>
+    </div>
+
+    <div class="control-group edit-ctrl">
+      <label>サイズ</label>
+      <select id="size-select">
+        <option value="30">小</option>
+        <option value="80" selected>中</option>
+        <option value="150">大</option>
+        <option value="250">特大</option>
+      </select>
+    </div>
+
+    <button onclick="undo()">↩️ 戻す (Ctrl+Z)</button>
+    <button class="btn-primary" onclick="copyToClipboard()">📋 クリップボードへコピー</button>
+    <button class="btn-primary" onclick="saveImage()">💾 保存</button>
+  </header>
+
+  <div id="workspace">
+    <div id="drop-zone">
+      <p>ここに画像をドラッグ＆ドロップ<br>または <b>Ctrl+V</b> で貼り付け</p>
+    </div>
+    <canvas id="canvas"></canvas>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const dropZone = document.getElementById('drop-zone');
+    
+    let history = [];
+    let isMouseDown = false;
+    let currentMode = 'edit'; // 'edit' または 'crop'
+    let cropStart = null;
+    let currentCropRect = null;
+
+    // 画像読み込み処理
+    document.getElementById('file-input').addEventListener('change', (e) => loadImage(e.target.files[0]));
+    window.addEventListener('dragover', (e) => e.preventDefault());
+    window.addEventListener('drop', (e) => {
+      e.preventDefault();
+      if (e.dataTransfer.files.length) loadImage(e.dataTransfer.files[0]);
+    });
+    window.addEventListener('paste', (e) => {
+      const items = e.clipboardData.items;
+      for (let item of items) {
+        if (item.type.indexOf('image') !== -1) {
+          loadImage(item.getAsFile());
+          break;
+        }
+      }
+    });
+
+    function loadImage(file) {
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          canvas.width = img.width;
+          canvas.height = img.height;
+          ctx.drawImage(img, 0, 0);
+          dropZone.style.display = 'none';
+          history = [];
+          saveHistory();
+        };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    }
+
+    // モード切り替え機能
+    function setMode(mode) {
+      currentMode = mode;
+      document.getElementById('mode-edit-btn').classList.toggle('active', mode === 'edit');
+      document.getElementById('mode-crop-btn').classList.toggle('active', mode === 'crop');
+      
+      document.getElementById('crop-controls').style.display = (mode === 'crop') ? 'flex' : 'none';
+      document.querySelectorAll('.edit-ctrl').forEach(el => el.style.display = (mode === 'edit') ? 'flex' : 'none');
+
+      if (mode === 'edit' && currentCropRect) {
+        redrawCanvas(); // トリミング枠の表示をクリア
+        currentCropRect = null;
+      }
+    }
+
+    function saveHistory() {
+      if (history.length > 15) history.shift();
+      history.push(ctx.getImageData(0, 0, canvas.width, canvas.height));
+    }
+
+    function undo() {
+      if (history.length > 1) {
+        history.pop();
+        ctx.putImageData(history[history.length - 1], 0, 0);
+        currentCropRect = null;
+      }
+    }
+
+    function redrawCanvas() {
+      if (history.length > 0) {
+        ctx.putImageData(history[history.length - 1], 0, 0);
+      }
+    }
+
+    window.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+        e.preventDefault();
+        undo();
+      }
+    });
+
+    // 座標取得
+    function getPos(e) {
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      return {
+        x: (e.clientX - rect.left) * scaleX,
+        y: (e.clientY - rect.top) * scaleY
+      };
+    }
+
+    // マウス/タッチ操作ハンドラー
+    canvas.addEventListener('mousedown', (e) => {
+      isMouseDown = true;
+      const pos = getPos(e);
+      if (currentMode === 'crop') {
+        cropStart = pos;
+      } else {
+        applyEffect(pos);
+      }
+    });
+
+    canvas.addEventListener('mousemove', (e) => {
+      if (!isMouseDown) return;
+      const pos = getPos(e);
+
+      if (currentMode === 'crop' && cropStart) {
+        calcCropArea(cropStart, pos);
+      } else if (currentMode === 'edit') {
+        applyEffect(pos);
+      }
+    });
+
+    window.addEventListener('mouseup', () => {
+      if (isMouseDown) {
+        isMouseDown = false;
+        if (currentMode === 'edit') {
+          saveHistory();
+        }
+      }
+    });
+
+    // トリミング選択枠の計算と描画（比率固定ドラッグ）
+    function calcCropArea(start, current) {
+      const aspectVal = document.getElementById('crop-aspect').value;
+      const [targetW, targetH] = aspectVal.split(':').map(Number);
+      const targetRatio = targetW / targetH;
+
+      let dx = current.x - start.x;
+      let dy = current.y - start.y;
+
+      let w = Math.abs(dx);
+      let h = w / targetRatio;
+
+      if (dy < 0) y = start.y - h;
+      else y = start.y;
+
+      if (dx < 0) x = start.x - w;
+      else x = start.x;
+
+      currentCropRect = { x, y, w, h };
+
+      // ガイド枠描画のためにCanvasを一旦復元して再描画
+      redrawCanvas();
+      ctx.save();
+      ctx.strokeStyle = '#ffeb3b';
+      ctx.lineWidth = Math.max(2, canvas.width / 300);
+      ctx.setLineDash([6, 6]);
+      ctx.strokeRect(x, y, w, h);
+      ctx.restore();
+    }
+
+    // トリミング実行
+    function executeCrop() {
+      if (!currentCropRect || currentCropRect.w <= 0 || currentCropRect.h <= 0) {
+        alert('画像上をドラッグして範囲を選択してください。');
+        return;
+      }
+
+      const origWidth = canvas.width;
+      const origHeight = canvas.height;
+      const { x, y, w, h } = currentCropRect;
+
+      // 一時Canvasに元の状態を描画
+      const tempCanvas = document.createElement('canvas');
+      tempCanvas.width = origWidth;
+      tempCanvas.height = origHeight;
+      const tempCtx = tempCanvas.getContext('2d');
+      tempCtx.putImageData(history[history.length - 1], 0, 0);
+
+      // 元のキャンバス全体サイズに拡大引き伸ばして描画
+      ctx.clearRect(0, 0, origWidth, origHeight);
+      ctx.drawImage(
+        tempCanvas,
+        x, y, w, h,           // 切り抜く範囲
+        0, 0, origWidth, origHeight // キャンバス全体に引き伸ばし
+      );
+
+      currentCropRect = null;
+      saveHistory();
+      setMode('edit'); // 完了したら加工モードに戻す
+    }
+
+    // 加工処理
+    function applyEffect(pos) {
+      const shape = document.getElementById('shape-select').value;
+      const effectType = document.getElementById('type-select').value;
+      const level = parseInt(document.getElementById('level-select').value);
+      const size = parseInt(document.getElementById('size-select').value);
+
+      let w = size;
+      let h = size;
+      let x = pos.x - w / 2;
+      let y = pos.y - h / 2;
+
+      x = Math.max(0, Math.min(canvas.width - w, x));
+      y = Math.max(0, Math.min(canvas.height - h, y));
+
+      ctx.save();
+
+      ctx.beginPath();
+      if (shape === 'circle' || shape === 'pen') {
+        ctx.arc(pos.x, pos.y, size / 2, 0, Math.PI * 2);
+      } else {
+        ctx.rect(x, y, w, h);
+      }
+      ctx.clip();
+
+      if (effectType === 'blackout') {
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(x, y, w, h);
+      } else if (effectType === 'mosaic') {
+        const sizeMap = [2, 3, 4, 5, 7];
+        const tileSize = sizeMap[level - 1];
+        const imgData = ctx.getImageData(x, y, w, h);
+        for (let py = 0; py < h; py += tileSize) {
+          for (let px = 0; px < w; px += tileSize) {
+            const i = (Math.floor(py) * Math.floor(w) + Math.floor(px)) * 4;
+            ctx.fillStyle = `rgb(${imgData.data[i]}, ${imgData.data[i+1]}, ${imgData.data[i+2]})`;
+            ctx.fillRect(x + px, y + py, tileSize, tileSize);
+          }
+        }
+      } else if (effectType === 'spread') {
+        const distMap = [1, 2, 3, 4, 6];
+        const dist = distMap[level - 1];
+        const srcData = ctx.getImageData(x, y, w, h);
+        const destData = ctx.createImageData(w, h);
+        
+        for (let py = 0; py < h; py++) {
+          for (let px = 0; px < w; px++) {
+            const rx = Math.min(w - 1, Math.max(0, px + Math.floor((Math.random() - 0.5) * dist * 2)));
+            const ry = Math.min(h - 1, Math.max(0, py + Math.floor((Math.random() - 0.5) * dist * 2)));
+            const srcI = (ry * Math.floor(w) + rx) * 4;
+            const destI = (py * Math.floor(w) + px) * 4;
+            
+            destData.data[destI] = srcData.data[srcI];
+            destData.data[destI+1] = srcData.data[srcI+1];
+            destData.data[destI+2] = srcData.data[srcI+2];
+            destData.data[destI+3] = srcData.data[srcI+3];
+          }
+        }
+        ctx.putImageData(destData, x, y);
+      } else if (effectType === 'blur-h' || effectType === 'blur-v') {
+        const blurRadiusMap = [1, 2, 3, 4, 5];
+        const r = blurRadiusMap[level - 1];
+        const srcData = ctx.getImageData(x, y, w, h);
+        const destData = ctx.createImageData(w, h);
+        const isH = (effectType === 'blur-h');
+
+        for (let py = 0; py < h; py++) {
+          for (let px = 0; px < w; px++) {
+            let rAcc = 0, gAcc = 0, bAcc = 0, count = 0;
+
+            for (let d = -r; d <= r; d++) {
+              const sampleX = isH ? Math.min(w - 1, Math.max(0, px + d)) : px;
+              const sampleY = !isH ? Math.min(h - 1, Math.max(0, py + d)) : py;
+              const idx = (Math.floor(sampleY) * Math.floor(w) + Math.floor(sampleX)) * 4;
+
+              rAcc += srcData.data[idx];
+              gAcc += srcData.data[idx + 1];
+              bAcc += srcData.data[idx + 2];
+              count++;
+            }
+
+            const destI = (py * Math.floor(w) + px) * 4;
+            destData.data[destI] = rAcc / count;
+            destData.data[destI + 1] = gAcc / count;
+            destData.data[destI + 2] = bAcc / count;
+            destData.data[destI + 3] = 255;
+          }
+        }
+        ctx.putImageData(destData, x, y);
+      } else {
+        const blurPxMap = [0.5, 1, 1.5, 2, 3];
+        const pxValue = blurPxMap[level - 1];
+        ctx.filter = `blur(${pxValue}px)`;
+        ctx.drawImage(canvas, x, y, w, h, x, y, w, h);
+        ctx.filter = 'none';
+      }
+
+      ctx.restore();
+    }
+
+    // 保存・コピー
+    function saveImage() {
+      const a = document.createElement('a');
+      a.href = canvas.toDataURL('image/png');
+      a.download = 'edited_image.png';
+      a.click();
+    }
+
+    async function copyToClipboard() {
+      canvas.toBlob(async (blob) => {
+        try {
+          await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+          alert('クリップボードにコピーしました！');
+        } catch (err) {
+          alert('コピーに失敗しました。');
+        }
+      });
+    }
+  </script>
+</body>
+</html>
